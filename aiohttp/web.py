@@ -115,9 +115,8 @@ class Application(MutableMapping):
         def reg_handler(signame):
             subsig = getattr(subapp, signame)
 
-            @asyncio.coroutine
-            def handler(app):
-                yield from subsig.send(subapp)
+            async def handler(app):
+                await subsig.send(subapp)
             appsig = getattr(self, signame)
             appsig.append(handler)
 
@@ -184,38 +183,34 @@ class Application(MutableMapping):
                          debug=self.debug, loop=self.loop,
                          **kwargs)
 
-    @asyncio.coroutine
-    def startup(self):
+    async def startup(self):
         """Causes on_startup signal
 
         Should be called in the event loop along with the request handler.
         """
-        yield from self.on_startup.send(self)
+        await self.on_startup.send(self)
 
-    @asyncio.coroutine
-    def shutdown(self):
+    async def shutdown(self):
         """Causes on_shutdown signal
 
         Should be called before cleanup()
         """
-        yield from self.on_shutdown.send(self)
+        await self.on_shutdown.send(self)
 
-    @asyncio.coroutine
-    def cleanup(self):
+    async def cleanup(self):
         """Causes on_cleanup signal
 
         Should be called after shutdown()
         """
-        yield from self.on_cleanup.send(self)
+        await self.on_cleanup.send(self)
 
-    @asyncio.coroutine
-    def finish(self):
+    async def finish(self):
         """Finalize an application.
 
         Deprecated alias for .cleanup()
         """
         warnings.warn("Use .cleanup() instead", DeprecationWarning)
-        yield from self.cleanup()
+        await self.cleanup()
 
     def register_on_finish(self, func, *args, **kwargs):
         warnings.warn("Use .on_cleanup.append() instead", DeprecationWarning)
@@ -229,9 +224,8 @@ class Application(MutableMapping):
             protocol.time_service, protocol._request_handler,
             secure_proxy_ssl_header=self._secure_proxy_ssl_header)
 
-    @asyncio.coroutine
-    def _handle(self, request):
-        match_info = yield from self._router.resolve(request)
+    async def _handle(self, request):
+        match_info = await self._router.resolve(request)
         assert isinstance(match_info, AbstractMatchInfo), match_info
         match_info.add_app(self)
         match_info.freeze()
@@ -241,14 +235,14 @@ class Application(MutableMapping):
         expect = request.headers.get(hdrs.EXPECT)
         if expect:
             resp = (
-                yield from match_info.expect_handler(request))
+                await match_info.expect_handler(request))
 
         if resp is None:
             handler = match_info.handler
             for app in match_info.apps:
                 for factory in reversed(app.middlewares):
-                    handler = yield from factory(app, handler)
-            resp = yield from handler(request)
+                    handler = await factory(app, handler)
+            resp = await handler(request)
 
         assert isinstance(resp, web_reqrep.StreamResponse), \
             ("Handler {!r} should return response instance, "
