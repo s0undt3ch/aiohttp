@@ -57,9 +57,8 @@ class AbstractResource(Sized, Iterable):
     def url_for(self, **kwargs):
         """Construct url for resource with additional params."""
 
-    @asyncio.coroutine
     @abc.abstractmethod  # pragma: no branch
-    def resolve(self, request):
+    async def resolve(self, request):
         """Resolve resource
 
         Return (UrlMappingMatchInfo, allowed_methods) pair."""
@@ -106,11 +105,10 @@ class AbstractRoute(abc.ABC):
               issubclass(handler, AbstractView)):
             pass
         else:
-            @asyncio.coroutine
-            def handler_wrapper(*args, **kwargs):
+            async def handler_wrapper(*args, **kwargs):
                 result = old_handler(*args, **kwargs)
                 if asyncio.iscoroutine(result):
-                    result = yield from result
+                    result = await result
                 return result
             old_handler = handler
             handler = handler_wrapper
@@ -156,9 +154,8 @@ class AbstractRoute(abc.ABC):
                       DeprecationWarning,
                       stacklevel=3)
 
-    @asyncio.coroutine
-    def handle_expect_header(self, request):
-        return (yield from self._expect_handler(request))
+    async def handle_expect_header(self, request):
+        return await self._expect_handler(request)
 
 
 class UrlMappingMatchInfo(dict, AbstractMatchInfo):
@@ -219,8 +216,7 @@ class MatchInfoError(UrlMappingMatchInfo):
                                                 self._exception.reason)
 
 
-@asyncio.coroutine
-def _defaultExpectHandler(request):
+async def _defaultExpectHandler(request):
     """Default handler for Expect header.
 
     Just send "100 Continue" to client.
@@ -259,8 +255,7 @@ class Resource(AbstractResource):
             'Instance of Route class is required, got {!r}'.format(route)
         self._routes.append(route)
 
-    @asyncio.coroutine
-    def resolve(self, request):
+    async def resolve(self, request):
         allowed_methods = set()
 
         match_dict = self._match(request.rel_url.raw_path)
@@ -276,7 +271,7 @@ class Resource(AbstractResource):
         else:
             return None, allowed_methods
 
-        yield  # pragma: no cover
+        #yield  # pragma: no cover
 
     def __len__(self):
         return len(self._routes)
@@ -435,8 +430,7 @@ class StaticResource(PrefixResource):
             'OPTIONS', handler, self,
             expect_handler=self._expect_handler)
 
-    @asyncio.coroutine
-    def resolve(self, request):
+    async def resolve(self, request):
         path = request.rel_url.raw_path
         method = request.method
         allowed_methods = set(self._routes)
@@ -449,7 +443,7 @@ class StaticResource(PrefixResource):
         match_dict = {'filename': unquote(path[len(self._prefix)+1:])}
         return (UrlMappingMatchInfo(match_dict, self._routes[method]),
                 allowed_methods)
-        yield  # pragma: no cover
+        #yield  # pragma: no cover
 
     def __len__(self):
         return len(self._routes)
@@ -457,8 +451,7 @@ class StaticResource(PrefixResource):
     def __iter__(self):
         return iter(self._routes.values())
 
-    @asyncio.coroutine
-    def _handle(self, request):
+    async def _handle(self, request):
         filename = unquote(request.match_info['filename'])
         try:
             filepath = self._directory.joinpath(filename).resolve()
@@ -483,7 +476,7 @@ class StaticResource(PrefixResource):
             else:
                 raise HTTPForbidden()
         elif filepath.is_file():
-            ret = yield from self._file_sender.send(request, filepath)
+            ret = await self._file_sender.send(request, filepath)
         else:
             raise HTTPNotFound
 
@@ -558,11 +551,10 @@ class PrefixedSubAppResource(PrefixResource):
         return {'app': self._app,
                 'prefix': self._prefix}
 
-    @asyncio.coroutine
-    def resolve(self, request):
+    async def resolve(self, request):
         if not request.url.raw_path.startswith(self._prefix):
             return None, set()
-        match_info = yield from self._app.router.resolve(request)
+        match_info = await self._app.router.resolve(request)
         match_info.add_app(self._app)
         if isinstance(match_info.http_exception, HTTPMethodNotAllowed):
             methods = match_info.http_exception.allowed_methods
@@ -630,8 +622,7 @@ class SystemRoute(AbstractRoute):
     def get_info(self):
         return {'http_exception': self._http_exception}
 
-    @asyncio.coroutine
-    def _handler(self, request):
+    async def _handler(self, request):
         raise self._http_exception
 
     @property
@@ -648,19 +639,17 @@ class SystemRoute(AbstractRoute):
 
 class View(AbstractView):
 
-    @asyncio.coroutine
-    def __iter__(self):
+    async def __iter__(self):
         if self.request.method not in hdrs.METH_ALL:
             self._raise_allowed_methods()
         method = getattr(self, self.request.method.lower(), None)
         if method is None:
             self._raise_allowed_methods()
-        resp = yield from method()
+        resp = await method()
         return resp
 
-    if PY_35:
-        def __await__(self):
-            return (yield from self.__iter__())
+    def __await__(self):
+        return self.__iter__().__await__()
 
     def _raise_allowed_methods(self):
         allowed_methods = {
@@ -676,8 +665,8 @@ class ResourcesView(Sized, Iterable, Container):
     def __len__(self):
         return len(self._resources)
 
-    def __iter__(self):
-        yield from self._resources
+    async def __iter__(self):
+        await self._resources
 
     def __contains__(self, resource):
         return resource in self._resources
@@ -694,8 +683,8 @@ class RoutesView(Sized, Iterable, Container):
     def __len__(self):
         return len(self._routes)
 
-    def __iter__(self):
-        yield from self._routes
+    async def __iter__(self):
+        await self._routes
 
     def __contains__(self, route):
         return route in self._routes
@@ -720,13 +709,12 @@ class UrlDispatcher(AbstractRouter, collections.abc.Mapping):
         assert app is not None
         self._app = app
 
-    @asyncio.coroutine
-    def resolve(self, request):
+    async def resolve(self, request):
         method = request.method
         allowed_methods = set()
 
         for resource in self._resources:
-            match_dict, allowed = yield from resource.resolve(request)
+            match_dict, allowed = await resource.resolve(request)
             if match_dict is not None:
                 return match_dict
             else:
